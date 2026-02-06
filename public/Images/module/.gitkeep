@@ -1,0 +1,2 @@
+# This folder stores uploaded module thumbnail images
+# Images are auto-renamed to: module_{courseId}_{moduleId}_{timestamp}_{random}.{ext}

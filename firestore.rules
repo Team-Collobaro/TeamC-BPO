@@ -1,0 +1,145 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && request.auth.token.role == 'admin';
+    }
+
+    function isEmployerWithSubscription() {
+      return isAuthenticated()
+        && request.auth.token.role == 'employer'
+        && request.auth.token.subscriptionActive == true;
+    }
+
+    // Users - read/update own only; create own on signup; admin can read all
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow update: if isOwner(userId);
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      allow delete: if false;
+    }
+
+    // Learner profiles - own only
+    match /learner_profiles/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // Candidate profiles - own read/write; employers with subscription or admin can read
+    match /candidate_profiles/{userId} {
+      allow read: if isOwner(userId) || isEmployerWithSubscription() || isAdmin();
+      allow create, update: if isOwner(userId);
+      allow delete: if false;
+    }
+
+    // Courses and modules - read by authenticated; write only via backend
+    match /courses/{courseId} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+      match /modules/{moduleId} {
+        allow read: if isAuthenticated();
+        allow write: if false;
+      }
+    }
+
+    // Questionnaires - read by authenticated
+    match /questionnaires/{qId} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
+
+    // Assessments - read own only; create/update only via Cloud Function
+    match /assessments/{assessmentId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create, update, delete: if false;
+    }
+
+    // Certificates - read own only
+    match /certificates/{certId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow write: if false;
+    }
+
+    // User subcollections: course_access, questionnaire_access, progress
+    match /users/{userId}/course_access/{docId} {
+      allow read, write: if isOwner(userId);
+    }
+    match /users/{userId}/questionnaire_access/{docId} {
+      allow read, write: if isOwner(userId);
+    }
+    match /users/{userId}/progress/{courseId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['completedModules']);
+      allow delete: if false;
+    }
+
+    // Payments - read own or admin; write only via Cloud Function
+    match /payments/{paymentId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow write: if false;
+    }
+
+    // Subscriptions - read own (employer)
+    match /subscriptions/{subId} {
+      allow read: if isAuthenticated() && resource.data.employerId == request.auth.uid;
+      allow write: if false;
+    }
+
+    // CV unlocks - read if employer or candidate
+    match /cv_unlocks/{unlockId} {
+      allow read: if isAuthenticated()
+        && (resource.data.employerId == request.auth.uid || resource.data.candidateId == request.auth.uid);
+      allow write: if false;
+    }
+
+    // Employer shortlists - read/write for owning employer
+    match /employer_shortlists/{shortlistId} {
+      allow read, write: if isAuthenticated() && resource.data.employerId == request.auth.uid;
+    }
+
+    // Internship applications - read own (learner); write only via Cloud Function
+    match /internship_applications/{appId} {
+      allow read: if isAuthenticated()
+        && (resource.data.learnerId == request.auth.uid || isAdmin());
+      allow write: if false;
+    }
+
+    // Pricing config - read by authenticated; write only via Cloud Function (admin)
+    match /pricing_config/{configId} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
+
+    // System config - read by authenticated
+    match /system_config/{configId} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
+
+    // Survey tokens - client cannot read/write (only Cloud Functions)
+    match /survey_tokens/{tokenId} {
+      allow read, write: if false;
+    }
+
+    // Audit logs - read admin only; write only via Cloud Function
+    match /audit_logs/{logId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Deny all other collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

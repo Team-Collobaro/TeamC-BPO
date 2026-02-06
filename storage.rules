@@ -1,0 +1,42 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper function to check if user is admin
+    function isAdmin() {
+      return isAuthenticated() && request.auth.token.role == 'admin';
+    }
+    
+    // NOTE: Module thumbnails are now stored directly in Firestore as Base64 strings
+    // No Firebase Storage rules needed for module thumbnails
+    
+    // CVs - candidates can upload their own, employers with subscription and admin can read
+    match /cvs/{userId}/{fileName} {
+      allow read: if isAuthenticated() && (
+        request.auth.uid == userId || 
+        request.auth.token.role == 'admin' ||
+        (request.auth.token.role == 'employer' && request.auth.token.subscriptionActive == true)
+      );
+      allow write: if isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // Certificates - users can read their own, admin can read all
+    match /certificates/{userId}/{fileName} {
+      allow read: if isAuthenticated() && (
+        request.auth.uid == userId || 
+        request.auth.token.role == 'admin'
+      );
+      allow write: if false; // Only via Cloud Functions
+    }
+    
+    // Deny all other paths
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
