@@ -79,14 +79,16 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
   const [playerReady, setPlayerReady] = useState(false);
   const [brandingOverlayVisible, setBrandingOverlayVisible] = useState(true);
   const [youtubeApiFailed, setYoutubeApiFailed] = useState(false);
+  const [postPlayOverlayActive, setPostPlayOverlayActive] = useState(false);
+  const postPlayOverlayTimerRef = useRef(null);
 
   const videoUrl = youtubeUrl || bunnyEmbedUrl;
   const youtubeVideoId = getYouTubeVideoId(videoUrl);
   const isYouTube = !!youtubeVideoId;
   const useFallbackEmbed = isYouTube && youtubeVideoId && youtubeApiFailed;
 
-  // Thumbnail URL is Base64 string stored directly in Firestore (no conversion needed)
-  const resolvedThumbnailUrl = thumbnailUrl;
+  // Thumbnail: use admin-uploaded image when paused; fallback to YouTube thumbnail for YouTube videos
+  const resolvedThumbnailUrl = thumbnailUrl || (youtubeVideoId ? `https://img.youtube.com/vi/${youtubeVideoId}/sddefault.jpg` : null);
 
   useEffect(() => {
     if (!isYouTube || !youtubeVideoId) {
@@ -156,7 +158,13 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
                 setIsPlaying(playing);
 
                 if (playing) {
-                  // Keep branding overlay for first 5 seconds of playback
+                  // Show thumbnail + loading for 3 seconds, then hide both
+                  if (postPlayOverlayTimerRef.current) clearTimeout(postPlayOverlayTimerRef.current);
+                  setPostPlayOverlayActive(true);
+                  postPlayOverlayTimerRef.current = setTimeout(() => {
+                    setPostPlayOverlayActive(false);
+                    postPlayOverlayTimerRef.current = null;
+                  }, 3000);
                   setBrandingOverlayVisible(true);
                   const player = event.target;
                   setTimeout(() => {
@@ -169,10 +177,13 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
                     }
                   }, 5000);
                 } else {
-                  // When paused or ended, show overlay again
+                  setPostPlayOverlayActive(false);
+                  if (postPlayOverlayTimerRef.current) {
+                    clearTimeout(postPlayOverlayTimerRef.current);
+                    postPlayOverlayTimerRef.current = null;
+                  }
                   setBrandingOverlayVisible(true);
                   if (event.data === 0) {
-                    // Video ended
                     setIsPlaying(false);
                   }
                 }
@@ -200,6 +211,10 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
     initPlayer();
 
     return () => {
+      if (postPlayOverlayTimerRef.current) {
+        clearTimeout(postPlayOverlayTimerRef.current);
+        postPlayOverlayTimerRef.current = null;
+      }
       if (playerRef.current && typeof playerRef.current.destroy === 'function') {
         try {
           playerRef.current.destroy();
@@ -405,33 +420,33 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
       <h2 className="text-xl font-semibold mb-4">Video Lesson</h2>
 
       <div className="relative aspect-video bg-black rounded-lg overflow-hidden mb-4 group youtube-player-wrapper">
-        {/* Video Container */}
+        {/* Video Container - z-0 so paused thumbnail overlay sits on top */}
         <div
           ref={containerRef}
-          className="w-full h-full relative"
+          className="w-full h-full relative z-0"
           style={{ minHeight: '400px' }}
         />
 
         {/* YouTube branding overlays removed - no black bars */}
 
-        {/* Loading Overlay */}
-        {isLoading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-75 z-10">
+        {/* Loading Overlay (initial load or first 3 seconds after play) */}
+        {(isLoading || (isPlaying && postPlayOverlayActive)) && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-75 z-20">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white"></div>
           </div>
         )}
 
-        {/* Custom Thumbnail Overlay (when paused) - Shows custom thumbnail instead of YouTube's */}
-        {!isLoading && !isPlaying && resolvedThumbnailUrl && (
-          <div
-            className="absolute inset-0 z-12"
-          >
+        {/* Thumbnail: when paused, or for 3 seconds after play (then loading hides it) */}
+        {!isLoading && (!isPlaying || postPlayOverlayActive) && resolvedThumbnailUrl && (
+          <div className="absolute inset-0 z-10" aria-hidden="true">
             <img
               src={resolvedThumbnailUrl}
-              alt="Video thumbnail"
+              alt=""
               className="w-full h-full object-cover"
+              onError={(e) => {
+                e.target.style.display = 'none';
+              }}
             />
-            {/* Dark overlay for better play button visibility */}
             <div className="absolute inset-0 bg-black/20 group-hover:bg-black/10 transition-colors pointer-events-none" />
           </div>
         )}
@@ -466,10 +481,10 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
           </div>
         )}
 
-        {/* Custom Controls Overlay (only when using JS API, not fallback embed) - no gradient, only controls at bottom */}
+        {/* Custom Controls Overlay (only when using JS API, not fallback embed) - always visible */}
         {!isLoading && isYouTube && !useFallbackEmbed && (
-          <div className={`absolute inset-0 flex flex-col justify-end transition-opacity z-20 ${!isPlaying ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-            }`}>
+          <div className="absolute inset-0 flex flex-col justify-end z-20 pointer-events-none">
+            <div className="pointer-events-auto bg-gradient-to-t from-black/70 to-transparent pt-8 pb-1">
             {/* Progress Bar */}
             <div
               className="w-full h-1.5 bg-white/30 cursor-pointer hover:h-2 transition-all"
@@ -554,13 +569,14 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
                 </svg>
               </button>
             </div>
+            </div>
           </div>
         )}
 
         {/* Fallback when YouTube API fails: simple embed so video still plays */}
         {useFallbackEmbed && (
           <iframe
-            src={`https://www.youtube.com/embed/${youtubeVideoId}?rel=0&modestbranding=1`}
+            src={`https://www.youtube.com/embed/${youtubeVideoId}?rel=0&modestbranding=1&controls=0`}
             className="w-full h-full absolute inset-0"
             frameBorder="0"
             allowFullScreen
