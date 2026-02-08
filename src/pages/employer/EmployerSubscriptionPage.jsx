@@ -1,10 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { doc, getDoc, collection, query, where, getDocs, limit } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
-import { db, functions } from '../../lib/firebase';
+import { db } from '../../lib/firebase';
+import { demoUnlockLocal } from '../../lib/dbUpdates';
 import { useAuth } from '../../contexts/AuthContext';
-import { isStripeConfigured } from '../../lib/stripe';
 import { EmployerLayout } from '../../components/EmployerLayout';
 
 export const EmployerSubscriptionPage = () => {
@@ -15,8 +14,7 @@ export const EmployerSubscriptionPage = () => {
   const [subscription, setSubscription] = useState(null);
   const [pricing, setPricing] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [startingCheckout, setStartingCheckout] = useState(false);
-  const [demoActivating, setDemoActivating] = useState(false);
+  const [activating, setActivating] = useState(false);
   const [error, setError] = useState(null);
 
   useEffect(() => {
@@ -52,40 +50,17 @@ export const EmployerSubscriptionPage = () => {
     load();
   }, [user?.uid]);
 
-  const handleSubscribe = async () => {
-    setStartingCheckout(true);
+  const handleActivate = async () => {
+    setActivating(true);
     setError(null);
     try {
-      const createSession = httpsCallable(functions, 'createSubscriptionCheckoutSession');
-      const origin = window.location.origin;
-      const result = await createSession({
-        successUrl: `${origin}/employer/subscription?success=1`,
-        cancelUrl: `${origin}/employer/subscription?cancel=1`
-      });
-      if (result.data?.url) {
-        window.location.href = result.data.url;
-      } else {
-        setError('No checkout URL returned');
-      }
-    } catch (err) {
-      setError(err.message || 'Failed to start checkout');
-    } finally {
-      setStartingCheckout(false);
-    }
-  };
-
-  const handleDemoActivate = async () => {
-    setDemoActivating(true);
-    setError(null);
-    try {
-      const demoUnlock = httpsCallable(functions, 'demoUnlock');
-      await demoUnlock({ type: 'subscription' });
+      await demoUnlockLocal(db, user.uid, { type: 'subscription' });
       setSubscription({ status: 'active' });
       window.location.reload();
     } catch (err) {
-      setError(err.message || 'Demo activation failed');
+      setError(err.message || 'Activation failed');
     } finally {
-      setDemoActivating(false);
+      setActivating(false);
     }
   };
 
@@ -133,25 +108,13 @@ export const EmployerSubscriptionPage = () => {
             {error}
           </div>
         )}
-        <div className="flex flex-wrap gap-3">
-          {isStripeConfigured() ? (
-            <button
-              onClick={handleSubscribe}
-              disabled={startingCheckout}
-              className="btn-primary"
-            >
-              {startingCheckout ? 'Redirecting...' : 'Subscribe'}
-            </button>
-          ) : (
-            <button
-              onClick={handleDemoActivate}
-              disabled={demoActivating}
-              className="btn-primary bg-amber-600 hover:bg-amber-700"
-            >
-              {demoActivating ? 'Activating...' : 'Activate subscription (demo — no payment)'}
-            </button>
-          )}
-        </div>
+        <button
+          onClick={handleActivate}
+          disabled={activating}
+          className="btn-primary"
+        >
+          {activating ? 'Activating...' : 'Activate subscription'}
+        </button>
       </div>
     </EmployerLayout>
   );

@@ -1,1 +1,5 @@
-.gitkeep
+{
+  "projects": {
+    "default": "teamc-bpo"
+  }
+}

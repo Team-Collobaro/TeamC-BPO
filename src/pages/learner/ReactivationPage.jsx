@@ -1,33 +1,29 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { doc, getDoc } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
-import { db, functions } from '../../lib/firebase';
+import { db } from '../../lib/firebase';
+import { demoUnlockLocal } from '../../lib/dbUpdates';
 import { useAuth } from '../../contexts/AuthContext';
 import { ROLES } from '../../lib/firebase';
-import { isStripeConfigured } from '../../lib/stripe';
 import { LearnerLayout } from '../../components/LearnerLayout';
 import { CandidateLayout } from '../../components/CandidateLayout';
-import { PaymentForm } from '../../components/PaymentForm';
 
 const profileCollection = (role) =>
   role === ROLES.CANDIDATE ? 'candidate_profiles' : 'learner_profiles';
 
-const dashboardPath = (role) =>
-  role === ROLES.CANDIDATE ? '/candidate/dashboard' : '/learner/dashboard';
-
 const profilePath = (role) =>
   role === ROLES.CANDIDATE ? '/candidate/profile' : '/learner/profile';
+
+const dashboardPath = (role) =>
+  role === ROLES.CANDIDATE ? '/candidate/dashboard' : '/learner/dashboard';
 
 export const ReactivationPage = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [profile, setProfile] = useState(null);
   const [pricing, setPricing] = useState(null);
-  const [clientSecret, setClientSecret] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [creatingPayment, setCreatingPayment] = useState(false);
-  const [demoUnlocking, setDemoUnlocking] = useState(false);
+  const [unlocking, setUnlocking] = useState(false);
   const [error, setError] = useState(null);
   const [reactivated, setReactivated] = useState(false);
 
@@ -57,36 +53,16 @@ export const ReactivationPage = () => {
   const amount = pricing?.reactivationFee ?? 1500;
   const isInactive = profile?.visibleToEmployers === false && profile?.autoInactiveTimestamp;
 
-  const handleStartPayment = async () => {
-    setCreatingPayment(true);
+  const handleReactivate = async () => {
+    setUnlocking(true);
     setError(null);
     try {
-      const processPayment = httpsCallable(functions, 'processPayment');
-      const result = await processPayment({
-        paymentType: 'reactivation',
-        amount,
-        currency: 'gbp',
-        metadata: { userId: user.uid }
-      });
-      setClientSecret(result.data.clientSecret);
-    } catch (err) {
-      setError(err.message || 'Failed to create payment');
-    } finally {
-      setCreatingPayment(false);
-    }
-  };
-
-  const handleDemoReactivate = async () => {
-    setDemoUnlocking(true);
-    setError(null);
-    try {
-      const demoUnlock = httpsCallable(functions, 'demoUnlock');
-      await demoUnlock({ type: 'reactivation' });
+      await demoUnlockLocal(db, user.uid, { type: 'reactivation' });
       setReactivated(true);
     } catch (err) {
-      setError(err.message || 'Demo reactivation failed');
+      setError(err.message || 'Reactivation failed');
     } finally {
-      setDemoUnlocking(false);
+      setUnlocking(false);
     }
   };
 
@@ -132,7 +108,7 @@ export const ReactivationPage = () => {
       <div className="card max-w-2xl mb-6 bg-amber-50 border border-amber-200">
         <h2 className="text-lg font-semibold text-amber-800 mb-2">Profile inactive</h2>
         <p className="text-amber-700 text-sm mb-4">
-          Your profile was set to inactive because we did not receive a response to the job-seeking survey within 48 hours. Pay the reactivation fee to make your profile visible to employers again.
+          Your profile was set to inactive because we did not receive a response to the job-seeking survey within 48 hours. Reactivate to make your profile visible to employers again.
         </p>
       </div>
       <div className="card max-w-2xl">
@@ -144,36 +120,13 @@ export const ReactivationPage = () => {
             {error}
           </div>
         )}
-        {!clientSecret ? (
-          <div className="flex flex-wrap gap-3">
-            {isStripeConfigured() ? (
-              <button
-                onClick={handleStartPayment}
-                disabled={creatingPayment}
-                className="btn-primary"
-              >
-                {creatingPayment ? 'Preparing...' : 'Reactivate (Pay)'}
-              </button>
-            ) : (
-              <button
-                onClick={handleDemoReactivate}
-                disabled={demoUnlocking}
-                className="btn-primary bg-amber-600 hover:bg-amber-700"
-              >
-                {demoUnlocking ? 'Reactivating...' : 'Reactivate (demo — no payment)'}
-              </button>
-            )}
-          </div>
-        ) : (
-          <PaymentForm
-            clientSecret={clientSecret}
-            amount={amount}
-            paymentType="reactivation"
-            metadata={{ userId: user.uid }}
-            onSuccess={() => setReactivated(true)}
-            onCancel={() => setClientSecret(null)}
-          />
-        )}
+        <button
+          onClick={handleReactivate}
+          disabled={unlocking}
+          className="btn-primary"
+        >
+          {unlocking ? 'Reactivating...' : 'Reactivate'}
+        </button>
       </div>
     </Layout>
   );

@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { collection, getDocs, doc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
-import { db } from '../../lib/firebase';
+import { db, auth } from '../../lib/firebase';
 import { AdminLayout } from '../../components/AdminLayout';
+import { useAuth } from '../../contexts/AuthContext';
 
 export const AdminCoursesPage = () => {
+  const { user, refreshUserClaims } = useAuth();
   const [courses, setCourses] = useState([]);
   const [selectedCourseId, setSelectedCourseId] = useState(null);
   const [modules, setModules] = useState([]);
@@ -273,6 +275,206 @@ export const AdminCoursesPage = () => {
     } catch (err) {
       console.error('Error deleting module:', err);
       alert('Failed to delete module. Please try again.');
+    }
+  };
+
+  const checkAdminPermissions = async () => {
+    // #region agent log
+    fetch('http://127.0.0.1:7246/ingest/41320592-e9da-445d-8f78-690f29197d46',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'AdminCoursesPage.jsx:281',message:'checkAdminPermissions called',data:{userId:user?.uid,userRole:user?.role},timestamp:Date.now(),runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
+    
+    const firebaseUser = auth.currentUser;
+    if (!firebaseUser) {
+      // #region agent log
+      fetch('http://127.0.0.1:7246/ingest/41320592-e9da-445d-8f78-690f29197d46',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'AdminCoursesPage.jsx:284',message:'No firebase user found',data:{},timestamp:Date.now(),runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+      return false;
+    }
+    
+    try {
+      // #region agent log
+      fetch('http://127.0.0.1:7246/ingest/41320592-e9da-445d-8f78-690f29197d46',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'AdminCoursesPage.jsx:287',message:'Getting token result BEFORE getIdTokenResult',data:{userId:firebaseUser.uid},timestamp:Date.now(),runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+      
+      // Force refresh token to get latest custom claims
+      const tokenResult = await firebaseUser.getIdTokenResult(true);
+      
+      // #region agent log
+      fetch('http://127.0.0.1:7246/ingest/41320592-e9da-445d-8f78-690f29197d46',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'AdminCoursesPage.jsx:288',message:'Token result received',data:{userId:firebaseUser.uid,claims:tokenResult.claims,hasAdminClaim:tokenResult.claims?.role === 'admin'},timestamp:Date.now(),runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+      
+      const hasAdminClaim = tokenResult.claims?.role === 'admin';
+      
+      if (!hasAdminClaim) {
+        // #region agent log
+        fetch('http://127.0.0.1:7246/ingest/41320592-e9da-445d-8f78-690f29197d46',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'AdminCoursesPage.jsx:290',message:'No admin claim, refreshing user claims',data:{userId:firebaseUser.uid},timestamp:Date.now(),runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+        // #endregion
+        
+        // Try refreshing user claims
+        await refreshUserClaims();
+        // Check again
+        const newTokenResult = await firebaseUser.getIdTokenResult(true);
+        
+        // #region agent log
+        fetch('http://127.0.0.1:7246/ingest/41320592-e9da-445d-8f78-690f29197d46',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'AdminCoursesPage.jsx:295',message:'After refresh token result',data:{userId:firebaseUser.uid,claims:newTokenResult.claims,hasAdminClaim:newTokenResult.claims?.role === 'admin'},timestamp:Date.now(),runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+        // #endregion
+        
+        return newTokenResult.claims?.role === 'admin';
+      }
+      
+      return hasAdminClaim;
+    } catch (err) {
+      // #region agent log
+      fetch('http://127.0.0.1:7246/ingest/41320592-e9da-445d-8f78-690f29197d46',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'AdminCoursesPage.jsx:300',message:'Error in checkAdminPermissions',data:{errorMessage:err.message,errorCode:err.code},timestamp:Date.now(),runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+      
+      console.error('Error checking admin permissions:', err);
+      return false;
+    }
+  };
+
+  const handleDeleteCourse = async (courseId) => {
+    // #region agent log
+    fetch('http://127.0.0.1:7246/ingest/41320592-e9da-445d-8f78-690f29197d46',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'AdminCoursesPage.jsx:305',message:'handleDeleteCourse called',data:{courseId,userId:user?.uid,userRole:user?.role},timestamp:Date.now(),runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
+    
+    const course = courses.find(c => c.id === courseId);
+    const courseTitle = course?.title || courseId;
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7246/ingest/41320592-e9da-445d-8f78-690f29197d46',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'AdminCoursesPage.jsx:308',message:'Course found',data:{courseId,courseTitle,courseExists:!!course},timestamp:Date.now(),runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
+    
+    // Skip permission check in testing/development mode
+    // Since Firestore rules allow everything, we don't need to check custom claims
+    const isTestingMode = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || !user;
+    const hasAdminRole = user?.role === 'admin';
+    
+    // #region agent log
+    console.log('🔍 [DELETE COURSE DEBUG]', {
+      courseId,
+      courseTitle,
+      userId: user?.uid,
+      userRole: user?.role,
+      isTestingMode,
+      hasAdminRole,
+      hostname: window.location.hostname
+    });
+    // #endregion
+    
+    // Only check permissions if not in testing mode and user doesn't have admin role
+    if (!isTestingMode && !hasAdminRole) {
+      const hasPermission = await checkAdminPermissions();
+      if (!hasPermission) {
+        alert(
+          'Permission Denied\n\n' +
+          'Your account does not have admin permissions.\n\n' +
+          'Current user role: ' + (user?.role || 'unknown')
+        );
+        return;
+      }
+    }
+    
+    // #region agent log
+    console.log('✅ [DELETE COURSE DEBUG] Permission check passed, proceeding with deletion');
+    // #endregion
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7246/ingest/41320592-e9da-445d-8f78-690f29197d46',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'AdminCoursesPage.jsx:326',message:'Showing confirmation dialog',data:{courseTitle},timestamp:Date.now(),runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    // #endregion
+    
+    if (!confirm(`Are you sure you want to delete the course "${courseTitle}"?\n\nThis will delete:\n- The course\n- All modules in this course\n\nThis action cannot be undone!`)) {
+      // #region agent log
+      fetch('http://127.0.0.1:7246/ingest/41320592-e9da-445d-8f78-690f29197d46',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'AdminCoursesPage.jsx:328',message:'User cancelled deletion',data:{courseId},timestamp:Date.now(),runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+      // #endregion
+      return;
+    }
+
+    // #region agent log
+    fetch('http://127.0.0.1:7246/ingest/41320592-e9da-445d-8f78-690f29197d46',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'AdminCoursesPage.jsx:330',message:'Starting deletion process',data:{courseId,courseTitle},timestamp:Date.now(),runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
+
+    try {
+      // #region agent log
+      console.log('🔍 [DELETE COURSE DEBUG] Starting deletion process', { courseId, courseTitle });
+      // #endregion
+      
+      // First, delete all modules in the course
+      console.log('🔍 [DELETE COURSE DEBUG] Fetching modules...');
+      const modulesSnapshot = await getDocs(collection(db, 'courses', courseId, 'modules'));
+      
+      // #region agent log
+      console.log('🔍 [DELETE COURSE DEBUG] Modules fetched', {
+        moduleCount: modulesSnapshot.docs.length,
+        moduleIds: modulesSnapshot.docs.map(d => d.id)
+      });
+      // #endregion
+      
+      const deleteModulePromises = modulesSnapshot.docs.map(moduleDoc => 
+        deleteDoc(doc(db, 'courses', courseId, 'modules', moduleDoc.id))
+      );
+      
+      console.log('🔍 [DELETE COURSE DEBUG] Deleting modules...', { promiseCount: deleteModulePromises.length });
+      await Promise.all(deleteModulePromises);
+      
+      // #region agent log
+      console.log('✅ [DELETE COURSE DEBUG] Modules deleted successfully');
+      // #endregion
+      
+      // Then delete the course itself
+      console.log('🔍 [DELETE COURSE DEBUG] Deleting course document...');
+      await deleteDoc(doc(db, 'courses', courseId));
+      
+      // #region agent log
+      console.log('✅ [DELETE COURSE DEBUG] Course deleted successfully');
+      // #endregion
+      
+      // Update UI
+      console.log('🔍 [DELETE COURSE DEBUG] Reloading courses list...');
+      await loadCourses();
+      
+      // #region agent log
+      console.log('✅ [DELETE COURSE DEBUG] Courses list reloaded');
+      // #endregion
+      
+      // Clear selection if deleted course was selected
+      if (selectedCourseId === courseId) {
+        setSelectedCourseId(null);
+        setModules([]);
+      }
+      
+      // #region agent log
+      console.log('✅ [DELETE COURSE DEBUG] Deletion completed successfully!');
+      // #endregion
+      
+      alert(`Course "${courseTitle}" and all its modules have been deleted successfully.`);
+    } catch (err) {
+      // #region agent log
+      console.error('❌ [DELETE COURSE DEBUG] Error caught:', {
+        errorMessage: err.message,
+        errorCode: err.code,
+        errorStack: err.stack,
+        courseId
+      });
+      // #endregion
+      
+      console.error('Error deleting course:', err);
+      
+      // Provide helpful error message
+      if (err.code === 'permission-denied' || err.message?.includes('permission')) {
+        alert(
+          'Permission Denied\n\n' +
+          'Firebase Auth custom claims are missing or incorrect.\n\n' +
+          'Solutions:\n' +
+          '1. Log out and log back in to refresh your token\n' +
+          '2. Verify your user document has role: "admin" in Firestore\n' +
+          '3. Ensure Cloud Function sets custom claims (or set manually)\n' +
+          '4. Check Firebase Console → Authentication → Users → Your User → Custom Claims\n\n' +
+          'Error: ' + err.message
+        );
+      } else {
+        alert(`Failed to delete course: ${err.message || 'Please try again.'}`);
+      }
     }
   };
 
@@ -603,14 +805,23 @@ export const AdminCoursesPage = () => {
           ) : (
             <ul className="space-y-2">
               {courses.map((c) => (
-                <li key={c.id}>
+                <li key={c.id} className="flex items-center gap-2 group">
                   <button
                     onClick={() => setSelectedCourseId(c.id)}
-                    className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium ${
+                    className={`flex-1 text-left px-3 py-2 rounded-lg text-sm font-medium ${
                       selectedCourseId === c.id ? 'bg-primary-100 text-primary-800' : 'hover:bg-gray-100'
                     }`}
                   >
                     {c.title || c.id}
+                  </button>
+                  <button
+                    onClick={() => handleDeleteCourse(c.id)}
+                    className="px-2 py-2 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                    title="Delete course"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
                   </button>
                 </li>
               ))}

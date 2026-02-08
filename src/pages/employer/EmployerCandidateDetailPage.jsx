@@ -1,12 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { doc, getDoc, getDocs, query, where, collection } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
-import { db, functions } from '../../lib/firebase';
+import { db } from '../../lib/firebase';
+import { demoUnlockLocal } from '../../lib/dbUpdates';
 import { useAuth } from '../../contexts/AuthContext';
-import { isStripeConfigured } from '../../lib/stripe';
 import { EmployerLayout } from '../../components/EmployerLayout';
-import { PaymentForm } from '../../components/PaymentForm';
 
 export const EmployerCandidateDetailPage = () => {
   const { candidateId } = useParams();
@@ -14,9 +12,8 @@ export const EmployerCandidateDetailPage = () => {
   const navigate = useNavigate();
   const [candidate, setCandidate] = useState(null);
   const [unlocked, setUnlocked] = useState(false);
-  const [clientSecret, setClientSecret] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [creatingPayment, setCreatingPayment] = useState(false);
+  const [unlocking, setUnlocking] = useState(false);
   const [pricing, setPricing] = useState(null);
   const [error, setError] = useState(null);
 
@@ -65,41 +62,15 @@ export const EmployerCandidateDetailPage = () => {
   };
 
   const handleUnlock = async () => {
-    if (!isStripeConfigured()) {
-      setCreatingPayment(true);
-      setError(null);
-      try {
-        const demoUnlock = httpsCallable(functions, 'demoUnlock');
-        await demoUnlock({ type: 'cv_unlock', candidateId });
-        await checkUnlocked();
-      } catch (err) {
-        setError(err.message || 'Demo unlock failed');
-      } finally {
-        setCreatingPayment(false);
-      }
-      return;
-    }
-    setCreatingPayment(true);
+    setUnlocking(true);
     setError(null);
     try {
-      const unlockCv = httpsCallable(functions, 'unlockCandidateCV');
-      const result = await unlockCv({ candidateId });
-      if (result.data?.clientSecret) {
-        setClientSecret(result.data.clientSecret);
-      } else if (result.data?.price) {
-        const processPayment = httpsCallable(functions, 'processPayment');
-        const payResult = await processPayment({
-          paymentType: 'cv_unlock',
-          amount: result.data.price,
-          currency: 'gbp',
-          metadata: { candidateId, employerId: user.uid }
-        });
-        setClientSecret(payResult.data.clientSecret);
-      }
+      await demoUnlockLocal(db, user.uid, { type: 'cv_unlock', candidateId });
+      await checkUnlocked();
     } catch (err) {
-      setError(err.message || 'Failed to create payment');
+      setError(err.message || 'Unlock failed');
     } finally {
-      setCreatingPayment(false);
+      setUnlocking(false);
     }
   };
 
@@ -160,27 +131,13 @@ export const EmployerCandidateDetailPage = () => {
                 {error}
               </div>
             )}
-            {!clientSecret ? (
-              <button
-                onClick={handleUnlock}
-                disabled={creatingPayment}
-                className={isStripeConfigured() ? 'btn-primary' : 'btn-primary bg-amber-600 hover:bg-amber-700'}
-              >
-                {creatingPayment ? 'Preparing...' : isStripeConfigured() ? 'Unlock CV (Pay)' : 'Unlock CV (demo — no payment)'}
-              </button>
-            ) : (
-              <PaymentForm
-                clientSecret={clientSecret}
-                amount={amount}
-                paymentType="cv_unlock"
-                metadata={{ candidateId, employerId: user.uid }}
-                onSuccess={() => {
-                  setClientSecret(null);
-                  setTimeout(checkUnlocked, 2000);
-                }}
-                onCancel={() => setClientSecret(null)}
-              />
-            )}
+            <button
+              onClick={handleUnlock}
+              disabled={unlocking}
+              className="btn-primary"
+            >
+              {unlocking ? 'Unlocking...' : `Unlock CV — £${(amount / 100).toFixed(2)}`}
+            </button>
           </>
         )}
       </div>

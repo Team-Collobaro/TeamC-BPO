@@ -3,46 +3,52 @@ import { useEffect, useRef, useState } from 'react';
 // Helper function to extract YouTube video ID from various URL formats
 const getYouTubeVideoId = (url) => {
   if (!url) return null;
-  
+
   const patterns = [
     /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/v\/)([^&\n?#]+)/,
     /youtube\.com\/watch\?.*v=([^&\n?#]+)/
   ];
-  
+
   for (const pattern of patterns) {
     const match = url.match(pattern);
     if (match && match[1]) {
       return match[1];
     }
   }
-  
+
   return null;
 };
 
-// Load YouTube IFrame API script
+// Load YouTube IFrame API script (longer timeout for slow networks)
+const YOUTUBE_API_TIMEOUT_MS = 25000;
+
 const loadYouTubeAPI = () => {
   return new Promise((resolve, reject) => {
     if (window.YT && window.YT.Player) {
       resolve();
       return;
     }
-    
-    // Timeout after 10 seconds
+
     const timeout = setTimeout(() => {
+      // Last chance: YouTube sometimes sets YT without calling the callback
+      if (window.YT && window.YT.Player) {
+        resolve();
+        return;
+      }
       reject(new Error('YouTube API loading timeout'));
-    }, 10000);
-    
+    }, YOUTUBE_API_TIMEOUT_MS);
+
     const tag = document.createElement('script');
     tag.src = 'https://www.youtube.com/iframe_api';
     tag.async = true;
     const firstScriptTag = document.getElementsByTagName('script')[0];
     firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
-    
+
     window.onYouTubeIframeAPIReady = () => {
       clearTimeout(timeout);
       resolve();
     };
-    
+
     tag.onerror = () => {
       clearTimeout(timeout);
       reject(new Error('Failed to load YouTube API'));
@@ -54,7 +60,7 @@ const loadYouTubeAPI = () => {
 // Thumbnails are stored as Base64 data URLs directly in Firestore
 const resolveThumbnailUrl = (thumbnailUrl) => {
   if (!thumbnailUrl) return null;
-  
+
   // Base64 data URLs (data:image/...) are used directly
   // Also support http/https URLs for backward compatibility
   return thumbnailUrl;
@@ -72,11 +78,13 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
   const [isLoading, setIsLoading] = useState(true);
   const [playerReady, setPlayerReady] = useState(false);
   const [brandingOverlayVisible, setBrandingOverlayVisible] = useState(true);
+  const [youtubeApiFailed, setYoutubeApiFailed] = useState(false);
 
   const videoUrl = youtubeUrl || bunnyEmbedUrl;
   const youtubeVideoId = getYouTubeVideoId(videoUrl);
   const isYouTube = !!youtubeVideoId;
-  
+  const useFallbackEmbed = isYouTube && youtubeVideoId && youtubeApiFailed;
+
   // Thumbnail URL is Base64 string stored directly in Firestore (no conversion needed)
   const resolvedThumbnailUrl = thumbnailUrl;
 
@@ -89,9 +97,13 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
     const initPlayer = async () => {
       try {
         await loadYouTubeAPI();
-        
-        if (!containerRef.current) {
-          console.error('Container ref not available');
+
+        let container = containerRef.current;
+        if (!container) {
+          await new Promise((r) => requestAnimationFrame(r));
+          container = containerRef.current;
+        }
+        if (!container) {
           setIsLoading(false);
           return;
         }
@@ -104,71 +116,79 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
         }
 
         try {
-          playerRef.current = new window.YT.Player(containerRef.current, {
-              videoId: youtubeVideoId,
-              playerVars: {
-                controls: 0,           // Hide YouTube controls
-                modestbranding: 1,     // Minimal branding
-                rel: 0,                // No related videos
-                showinfo: 0,           // Hide video info (deprecated but may help)
-                iv_load_policy: 3,     // Hide annotations
-                fs: 0,                 // Hide fullscreen button
-                disablekb: 1,          // Disable keyboard controls
-                playsinline: 1,        // Play inline on mobile
-                cc_load_policy: 0,     // Hide captions by default
-                autohide: 1,           // Auto-hide controls
-                enablejsapi: 1,        // Enable JS API
-                origin: window.location.origin,
-                widget_referrer: window.location.origin
+          playerRef.current = new window.YT.Player(container, {
+            videoId: youtubeVideoId,
+            playerVars: {
+              controls: 0,           // Hide YouTube controls
+              modestbranding: 1,     // Minimal branding
+              rel: 0,                // No related videos
+              showinfo: 0,           // Hide video info (deprecated but may help)
+              iv_load_policy: 3,     // Hide annotations
+              fs: 0,                 // Hide fullscreen button
+              disablekb: 1,          // Disable keyboard controls
+              playsinline: 1,        // Play inline on mobile
+              cc_load_policy: 0,     // Hide captions by default
+              autohide: 1,           // Auto-hide controls
+              enablejsapi: 1,        // Enable JS API
+              // Set origin to current page origin for postMessage security
+              // Note: YouTube's widget API may still log postMessage errors in dev mode
+              // These are harmless and suppressed in main.jsx
+              origin: window.location.origin,
+              widget_referrer: window.location.origin
+            },
+            events: {
+              onReady: (event) => {
+                setPlayerReady(true);
+                setIsLoading(false);
+                try {
+                  setDuration(event.target.getDuration());
+                  event.target.setVolume(volume);
+                } catch (err) {
+                  console.error('Error in onReady:', err);
+                }
               },
-              events: {
-                onReady: (event) => {
-                  setPlayerReady(true);
-                  setIsLoading(false);
-                  try {
-                    setDuration(event.target.getDuration());
-                    event.target.setVolume(volume);
-                  } catch (err) {
-                    console.error('Error in onReady:', err);
-                  }
-                },
-                onStateChange: (event) => {
-                  // YT.PlayerState.PLAYING = 1, PAUSED = 2, ENDED = 0
-                  const playing = event.data === 1;
-                  setIsPlaying(playing);
+              onStateChange: (event) => {
+                // YT.PlayerState.PLAYING = 1, PAUSED = 2, ENDED = 0
+                const playing = event.data === 1;
+                setIsPlaying(playing);
 
-                  if (playing) {
-                    // Keep branding overlay for first 5 seconds of playback
-                    setBrandingOverlayVisible(true);
-                    setTimeout(() => {
-                      // Only hide if still playing
-                      if (playerRef.current && playerRef.current.getPlayerState() === window.YT.PlayerState.PLAYING) {
+                if (playing) {
+                  // Keep branding overlay for first 5 seconds of playback
+                  setBrandingOverlayVisible(true);
+                  const player = event.target;
+                  setTimeout(() => {
+                    try {
+                      if (player && typeof player.getPlayerState === 'function' && player.getPlayerState() === window.YT.PlayerState.PLAYING) {
                         setBrandingOverlayVisible(false);
                       }
-                    }, 5000);
-                  } else {
-                    // When paused or ended, show overlay again
-                    setBrandingOverlayVisible(true);
-                    if (event.data === 0) {
-                      // Video ended
-                      setIsPlaying(false);
+                    } catch (_) {
+                      // Player API may not be ready; ignore
                     }
+                  }, 5000);
+                } else {
+                  // When paused or ended, show overlay again
+                  setBrandingOverlayVisible(true);
+                  if (event.data === 0) {
+                    // Video ended
+                    setIsPlaying(false);
                   }
-                },
-                onError: (event) => {
-                  console.error('YouTube player error:', event.data);
-                  setIsLoading(false);
-                  setPlayerReady(false);
                 }
+              },
+              onError: (event) => {
+                console.error('YouTube player error:', event.data);
+                setIsLoading(false);
+                setPlayerReady(false);
               }
-            });
-          } catch (err) {
-            console.error('Error creating YouTube player:', err);
-            setIsLoading(false);
-            setPlayerReady(false);
-          }
+            }
+          });
+        } catch (err) {
+          console.error('Error creating YouTube player:', err);
+          setIsLoading(false);
+          setPlayerReady(false);
+        }
       } catch (err) {
-        console.error('Error loading YouTube API:', err);
+        console.warn('YouTube API failed, using simple embed:', err?.message || err);
+        setYoutubeApiFailed(true);
         setIsLoading(false);
         setPlayerReady(false);
       }
@@ -192,9 +212,13 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
     if (!playerReady || !isYouTube) return;
 
     const interval = setInterval(() => {
-      if (playerRef.current && typeof playerRef.current.getCurrentTime === 'function') {
-        const time = playerRef.current.getCurrentTime();
-        setCurrentTime(time);
+      try {
+        if (playerRef.current && typeof playerRef.current.getCurrentTime === 'function') {
+          const time = playerRef.current.getCurrentTime();
+          setCurrentTime(time);
+        }
+      } catch (_) {
+        // Player API may be unavailable (e.g. during teardown or origin mismatch)
       }
     }, 100);
 
@@ -204,7 +228,7 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
   const togglePlay = () => {
     if (!playerRef.current) return;
     if (!playerReady) return;
-    
+
     try {
       if (isPlaying) {
         playerRef.current.pauseVideo();
@@ -297,15 +321,15 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
   return (
     <div className="card">
       <h2 className="text-xl font-semibold mb-4">Video Lesson</h2>
-      
+
       <div className="relative aspect-video bg-black rounded-lg overflow-hidden mb-4 group youtube-player-wrapper">
         {/* Video Container */}
-        <div 
+        <div
           ref={containerRef}
           className="w-full h-full relative"
           style={{ minHeight: '400px' }}
         />
-        
+
         {/* YouTube branding overlays removed - no black bars */}
 
         {/* Loading Overlay */}
@@ -317,12 +341,12 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
 
         {/* Custom Thumbnail Overlay (when paused) - Shows custom thumbnail instead of YouTube's */}
         {!isLoading && !isPlaying && resolvedThumbnailUrl && (
-          <div 
+          <div
             className="absolute inset-0 z-12"
           >
-            <img 
-              src={resolvedThumbnailUrl} 
-              alt="Video thumbnail" 
+            <img
+              src={resolvedThumbnailUrl}
+              alt="Video thumbnail"
               className="w-full h-full object-cover"
             />
             {/* Dark overlay for better play button visibility */}
@@ -330,9 +354,9 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
           </div>
         )}
 
-        {/* Large Play Button Overlay (when paused) */}
-        {!isLoading && !isPlaying && (isYouTube ? playerReady : true) && (
-          <div 
+        {/* Large Play Button Overlay (when paused; not used for fallback embed) */}
+        {!useFallbackEmbed && !isLoading && !isPlaying && (isYouTube ? playerReady : true) && (
+          <div
             className="absolute inset-0 flex items-center justify-center z-15 cursor-pointer group/play"
             onClick={(e) => {
               e.stopPropagation();
@@ -347,17 +371,16 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
           </div>
         )}
 
-        {/* Custom Controls Overlay */}
-        {!isLoading && isYouTube && (
-          <div className={`absolute inset-0 flex flex-col justify-end bg-gradient-to-t from-black/80 via-transparent to-transparent transition-opacity z-20 ${
-            !isPlaying ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-          }`}>
+        {/* Custom Controls Overlay (only when using JS API, not fallback embed) - no gradient, only controls at bottom */}
+        {!isLoading && isYouTube && !useFallbackEmbed && (
+          <div className={`absolute inset-0 flex flex-col justify-end transition-opacity z-20 ${!isPlaying ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+            }`}>
             {/* Progress Bar */}
-            <div 
+            <div
               className="w-full h-1.5 bg-white/30 cursor-pointer hover:h-2 transition-all"
               onClick={handleSeek}
             >
-              <div 
+              <div
                 className="h-full bg-primary-500 transition-all relative"
                 style={{ width: `${progressPercent}%` }}
               >
@@ -434,6 +457,18 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
           </div>
         )}
 
+        {/* Fallback when YouTube API fails: simple embed so video still plays */}
+        {useFallbackEmbed && (
+          <iframe
+            src={`https://www.youtube.com/embed/${youtubeVideoId}?rel=0&modestbranding=1`}
+            className="w-full h-full absolute inset-0"
+            frameBorder="0"
+            allowFullScreen
+            allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture;"
+            title="Video lesson"
+          />
+        )}
+
         {/* Fallback for non-YouTube videos (Bunny Stream) */}
         {!isYouTube && videoUrl && (
           <iframe
@@ -456,8 +491,8 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
           </div>
         )}
 
-        {/* Error Message for YouTube */}
-        {isYouTube && !isLoading && !playerReady && youtubeVideoId && (
+        {/* Error Message for YouTube (only when API failed and we're not showing fallback embed) */}
+        {isYouTube && !isLoading && !playerReady && youtubeVideoId && !useFallbackEmbed && (
           <div className="absolute inset-0 flex items-center justify-center text-white bg-gray-900 z-20">
             <div className="text-center">
               <p className="text-lg font-medium mb-2">Video failed to load</p>
@@ -466,7 +501,7 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
           </div>
         )}
       </div>
-      
+
       {!videoCompleted && (
         <div className="border-t pt-4">
           <label className="flex items-center gap-2 mb-3 cursor-pointer">
@@ -477,7 +512,7 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
             />
             <span className="text-sm text-gray-700">I have watched the video fully</span>
           </label>
-          
+
           <button
             onClick={onVideoComplete}
             className="btn-primary w-full"
@@ -486,7 +521,7 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
           </button>
         </div>
       )}
-      
+
       {videoCompleted && (
         <div className="bg-green-50 border border-green-200 rounded-lg p-4">
           <p className="text-green-800 font-medium">✓ Video completed! Now take the MCQ below.</p>

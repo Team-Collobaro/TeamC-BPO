@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { doc, getDoc } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
-import { db, functions } from '../../lib/firebase';
+import { db } from '../../lib/firebase';
 import { useAuth } from '../../contexts/AuthContext';
+import { submitAssessmentLocal } from '../../lib/dbUpdates';
 import { LearnerLayout } from '../../components/LearnerLayout';
 
 const DEFAULT_QUESTIONNAIRE_ID = 'final-assessment';
@@ -52,30 +52,55 @@ export const AssessmentStartPage = () => {
 
   const handleSubmit = async () => {
     const questions = questionnaire?.questions ?? [];
-    if (Object.keys(answers).length !== questions.length) {
-      alert('Please answer all questions.');
+    // More robust check: ensure every question has an answer
+    const unansweredQuestions = questions.filter(q => 
+      answers[q.id] === undefined || answers[q.id] === null
+    );
+    if (unansweredQuestions.length > 0) {
+      alert(`Please answer all questions. You have ${unansweredQuestions.length} unanswered question(s).`);
       return;
     }
+    
+    if (!user || !user.uid) {
+      setError('You must be logged in to submit answers.');
+      return;
+    }
+    
     setSubmitting(true);
     setError(null);
     try {
-      const answersArray = questions.map((q) => answers[q.id]);
-      const submitAssessment = httpsCallable(functions, 'submitAssessment');
-      const result = await submitAssessment({
+      const answersArray = questions.map((q) => {
+        const answer = answers[q.id];
+        if (answer === undefined || answer === null) {
+          throw new Error(`Missing answer for question: ${q.question || q.id}`);
+        }
+        // Ensure answer is a number
+        const numAnswer = typeof answer === 'number' ? answer : parseInt(answer, 10);
+        if (isNaN(numAnswer) || numAnswer < 0) {
+          throw new Error(`Invalid answer format for question: ${q.question || q.id}`);
+        }
+        return numAnswer;
+      });
+      
+      const result = await submitAssessmentLocal(db, user.uid, {
         questionnaireId: questionnaire.id,
         answers: answersArray,
         courseId: null
       });
       navigate('/learner/assessment/results', {
         state: {
-          score: result.data.score,
-          starRating: result.data.starRating,
-          certificateId: result.data.certificateId,
-          certificateNumber: result.data.certificateNumber,
-          passed: result.data.passed
+          score: result.score,
+          starRating: result.starRating,
+          certificateId: result.certificateId,
+          certificateNumber: result.certificateNumber,
+          passed: result.passed,
+          correctCount: result.correctCount,
+          totalQuestions: result.totalQuestions,
+          questionResults: result.questionResults
         }
       });
     } catch (err) {
+      console.error('Assessment submission error:', err);
       setError(err.message || 'Failed to submit. Please try again.');
     } finally {
       setSubmitting(false);
@@ -107,7 +132,10 @@ export const AssessmentStartPage = () => {
 
   const questions = questionnaire?.questions ?? [];
   const question = questions[currentStep];
-  const allAnswered = questions.length > 0 && Object.keys(answers).length === questions.length;
+  // Check that all questions have answers (more robust than just counting keys)
+  const allAnswered = questions.length > 0 && questions.every(q => 
+    answers[q.id] !== undefined && answers[q.id] !== null
+  );
 
   return (
     <LearnerLayout>

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { collection, getDocs, query, orderBy } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
-import { db, functions } from '../../lib/firebase';
+import { db } from '../../lib/firebase';
+import { updateUserStatusLocal } from '../../lib/dbUpdates';
 import { AdminLayout } from '../../components/AdminLayout';
 
 export const AdminUsersPage = () => {
@@ -33,8 +33,7 @@ export const AdminUsersPage = () => {
     setError(null);
     setUpdating(userId);
     try {
-      const updateFn = httpsCallable(functions, 'updateUserStatus');
-      await updateFn({ userId, status });
+      await updateUserStatusLocal(db, userId, status);
       setUsers((prev) =>
         prev.map((u) => (u.id === userId ? { ...u, status } : u))
       );

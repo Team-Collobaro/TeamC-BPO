@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
-import { db, functions } from '../../lib/firebase';
+import { db } from '../../lib/firebase';
+import { updatePricingConfigLocal } from '../../lib/dbUpdates';
 import { AdminLayout } from '../../components/AdminLayout';
 
 export const AdminPricingPage = () => {
@@ -56,8 +56,7 @@ export const AdminPricingPage = () => {
     setSuccess(false);
     setSaving(true);
     try {
-      const updateFn = httpsCallable(functions, 'updatePricingConfig');
-      await updateFn({
+      await updatePricingConfigLocal(db, {
         courseFee: courseFee ? parseInt(courseFee, 10) : undefined,
         joiningFee: joiningFee ? parseInt(joiningFee, 10) : undefined,
         retakeFee: retakeFee ? parseInt(retakeFee, 10) : undefined,

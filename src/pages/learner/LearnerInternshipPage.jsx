@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { doc, getDoc, collection, query, where, getDocs, orderBy } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
-import { db, functions } from '../../lib/firebase';
+import { db } from '../../lib/firebase';
+import { applyForInternshipLocal } from '../../lib/dbUpdates';
 import { useAuth } from '../../contexts/AuthContext';
 import { LearnerLayout } from '../../components/LearnerLayout';
 
@@ -73,8 +73,7 @@ export const LearnerInternshipPage = () => {
     }
     setSubmitting(true);
     try {
-      const apply = httpsCallable(functions, 'applyForInternship');
-      await apply({
+      await applyForInternshipLocal(db, user.uid, {
         assessmentId,
         availability: availability.trim(),
         preferredStartDate: preferredStartDate || null,

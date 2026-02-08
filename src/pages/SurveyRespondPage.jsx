@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { httpsCallable } from 'firebase/functions';
-import { functions } from '../lib/firebase';
+import { db } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { respondToSurveyLocal } from '../lib/dbUpdates';
 import { ProtectedRoute } from '../components/ProtectedRoute';
 import { Layout } from '../components/Layout';
 
@@ -21,8 +21,7 @@ export const SurveyRespondPage = () => {
     setSubmitting(true);
     setError(null);
     try {
-      const respondToSurvey = httpsCallable(functions, 'respondToSurvey');
-      await respondToSurvey({ token, response: value });
+      await respondToSurveyLocal(db, user.uid, { token, response: value });
       setSubmitted(true);
       setTimeout(() => {
         navigate(user?.role === 'candidate' ? '/candidate/dashboard' : '/learner/dashboard');

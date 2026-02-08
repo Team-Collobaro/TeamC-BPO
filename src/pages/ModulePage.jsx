@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { doc, getDoc, updateDoc, setDoc, collection, query, orderBy, getDocs } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
-import { db, functions } from '../lib/firebase';
+import { doc, getDoc, setDoc, collection, query, orderBy, getDocs } from 'firebase/firestore';
+import { db } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
+
+import { submitMcqLocal } from '../lib/dbUpdates';
 import { Layout } from '../components/Layout';
 import { LearnerLayout } from '../components/LearnerLayout';
 import { ROLES } from '../lib/firebase';
@@ -15,7 +16,7 @@ export const ModulePage = () => {
   const { courseId, moduleId } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
-  
+
   const [module, setModule] = useState(null);
   const [modules, setModules] = useState([]);
   const [progress, setProgress] = useState(null);
@@ -27,10 +28,12 @@ export const ModulePage = () => {
     loadModuleData();
   }, [courseId, moduleId]);
 
-  const loadModuleData = async () => {
-    setLoading(true);
+  const loadModuleData = async (skipLoading = false) => {
+    if (!skipLoading) {
+      setLoading(true);
+    }
     setError(null);
-    
+
     try {
       // Load current module
       const moduleDoc = await getDoc(doc(db, 'courses', courseId, 'modules', moduleId));
@@ -56,14 +59,14 @@ export const ModulePage = () => {
       const progressDoc = await getDoc(
         doc(db, 'users', user.uid, 'progress', courseId)
       );
-      
+
       if (progressDoc.exists()) {
         setProgress(progressDoc.data());
-        
+
         // Check if user has access to this module
         const moduleData = moduleDoc.data();
         const progressData = progressDoc.data();
-        
+
         if (moduleData.order > progressData.unlockedModuleOrder) {
           setError('This module is locked. Complete previous modules first.');
         }
@@ -74,7 +77,7 @@ export const ModulePage = () => {
           completedModules: {}
         };
         setProgress(initialProgress);
-        
+
         // Check if this is module 1
         if (moduleDoc.data().order > 1) {
           setError('This module is locked. Start with Module 1.');
@@ -98,7 +101,7 @@ export const ModulePage = () => {
     try {
       const progressRef = doc(db, 'users', user.uid, 'progress', courseId);
       const currentProgress = progress || { unlockedModuleOrder: 1, completedModules: {} };
-      
+
       // Use setDoc with merge to handle both new and existing documents
       const updatedProgress = {
         ...currentProgress,
@@ -115,11 +118,11 @@ export const ModulePage = () => {
 
       // Update local state
       setProgress(updatedProgress);
-      
+
       alert('Video marked as complete! ✅');
     } catch (err) {
       console.error('Error marking video complete:', err);
-      
+
       // If document doesn't exist, create it
       if (err.code === 'not-found') {
         try {
@@ -132,7 +135,7 @@ export const ModulePage = () => {
               }
             }
           };
-          
+
           await setDoc(progressRef, newProgress, { merge: true });
           setProgress(newProgress);
           alert('Video marked as complete! ✅');
@@ -147,28 +150,80 @@ export const ModulePage = () => {
   };
 
   const handleMCQSubmit = async (answers) => {
-    setIsSubmitting(true);
+    // #region agent log
+    fetch('http://127.0.0.1:7246/ingest/41320592-e9da-445d-8f78-690f29197d46',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ModulePage.jsx:150',message:'handleMCQSubmit called',data:{userId:user?.uid,hasModule:!!module,mcqCount:module?.mcq?.length,answersCount:Object.keys(answers).length},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     
+    if (!user || !user.uid) {
+      // #region agent log
+      fetch('http://127.0.0.1:7246/ingest/41320592-e9da-445d-8f78-690f29197d46',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ModulePage.jsx:152',message:'User not authenticated',data:{},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      alert('You must be logged in to submit answers.');
+      throw new Error('User not authenticated');
+    }
+
+    if (!module || !module.mcq || module.mcq.length === 0) {
+      // #region agent log
+      fetch('http://127.0.0.1:7246/ingest/41320592-e9da-445d-8f78-690f29197d46',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ModulePage.jsx:157',message:'No questions available',data:{hasModule:!!module,mcqCount:module?.mcq?.length},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      alert('No questions available in this module.');
+      throw new Error('No questions available');
+    }
+
+    setIsSubmitting(true);
     try {
-      // Convert answers object to array format
-      const answersArray = module.mcq.map(question => answers[question.id]);
+      // Map answers in the correct order, ensuring all are numbers
+      const answersArray = module.mcq.map((question, index) => {
+        const answer = answers[question.id];
+        if (answer === undefined || answer === null) {
+          throw new Error(`Missing answer for question ${index + 1}: ${question.question || question.id}`);
+        }
+        // Ensure answer is a number
+        const numAnswer = typeof answer === 'number' ? answer : parseInt(answer, 10);
+        if (isNaN(numAnswer) || numAnswer < 0) {
+          throw new Error(`Invalid answer format for question ${index + 1}`);
+        }
+        return numAnswer;
+      });
+
+      // #region agent log
+      fetch('http://127.0.0.1:7246/ingest/41320592-e9da-445d-8f78-690f29197d46',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ModulePage.jsx:177',message:'Calling submitMcqLocal',data:{courseId,moduleId,answersArray,answersArrayLength:answersArray.length},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       
-      // Call Cloud Function
-      const submitMcq = httpsCallable(functions, 'submitMcq');
-      const result = await submitMcq({
+      console.log('Submitting MCQ with answers:', answersArray);
+      const result = await submitMcqLocal(db, user.uid, {
         courseId,
         moduleId,
         answers: answersArray
       });
-
-      // Reload progress
-      await loadModuleData();
       
-      return result.data;
+      // #region agent log
+      fetch('http://127.0.0.1:7246/ingest/41320592-e9da-445d-8f78-690f29197d46',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ModulePage.jsx:184',message:'submitMcqLocal returned',data:{result:result,hasResult:!!result,resultKeys:result?Object.keys(result):[],hasAnswerResults:!!result?.answerResults,answerResultsLength:result?.answerResults?.length},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      
+      console.log('MCQ submission result:', result);
+      
+      // Update progress state locally without reloading entire module
+      // This prevents component remounting and losing results state
+      const progressRef = doc(db, 'users', user.uid, 'progress', courseId);
+      const progressSnap = await getDoc(progressRef);
+      if (progressSnap.exists()) {
+        setProgress(progressSnap.data());
+      }
+      
+      // #region agent log
+      fetch('http://127.0.0.1:7246/ingest/41320592-e9da-445d-8f78-690f29197d46',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ModulePage.jsx:209',message:'Returning result to MCQSection',data:{result:result},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      
+      return result;
     } catch (err) {
+      // #region agent log
+      fetch('http://127.0.0.1:7246/ingest/41320592-e9da-445d-8f78-690f29197d46',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ModulePage.jsx:188',message:'Error in handleMCQSubmit',data:{errorMessage:err?.message,errorName:err?.name,errorCode:err?.code,errorStack:err?.stack},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       console.error('Error submitting MCQ:', err);
-      alert('Failed to submit quiz. Please try again.');
-      return { passed: false, score: 0 };
+      const errorMessage = err.message || 'Failed to submit quiz. Please try again.';
+      alert(errorMessage);
+      throw err; // Re-throw so MCQSection can handle it
     } finally {
       setIsSubmitting(false);
     }
@@ -276,9 +331,10 @@ export const ModulePage = () => {
               />
 
               <MCQSection
+                key={`mcq-${moduleId}`}
                 mcqQuestions={module.mcq || []}
                 onSubmit={handleMCQSubmit}
-                isLocked={!videoCompleted}
+                isLocked={false}
                 isSubmitting={isSubmitting}
               />
             </>

@@ -193,6 +193,13 @@ Your gated learning platform is now live!
 
 ## 🔧 Common Issues & Solutions
 
+### CORS error when submitting MCQ from localhost
+Calling deployed Cloud Functions from `http://localhost:5173` can be blocked by CORS. **Fix:** use the Functions emulator for local dev:
+
+1. In one terminal: `firebase emulators:start --only functions`
+2. In `.env.local` add: `VITE_USE_FUNCTIONS_EMULATOR=true`
+3. Restart the dev server (`npm run dev`) and refresh the app. MCQ submit will use the emulator and avoid CORS.
+
 ### "Firebase not initialized"
 - Check `.env.local` file exists
 - Restart dev server: `Ctrl+C` then `npm run dev`

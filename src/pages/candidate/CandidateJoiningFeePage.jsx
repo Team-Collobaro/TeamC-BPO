@@ -1,21 +1,17 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { doc, getDoc } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
-import { db, functions } from '../../lib/firebase';
+import { db } from '../../lib/firebase';
+import { demoUnlockLocal } from '../../lib/dbUpdates';
 import { useAuth } from '../../contexts/AuthContext';
-import { isStripeConfigured } from '../../lib/stripe';
 import { CandidateLayout } from '../../components/CandidateLayout';
-import { PaymentForm } from '../../components/PaymentForm';
 
 export const CandidateJoiningFeePage = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [pricing, setPricing] = useState(null);
-  const [clientSecret, setClientSecret] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [creatingPayment, setCreatingPayment] = useState(false);
-  const [demoUnlocking, setDemoUnlocking] = useState(false);
+  const [unlocking, setUnlocking] = useState(false);
   const [error, setError] = useState(null);
 
   useEffect(() => {
@@ -27,36 +23,16 @@ export const CandidateJoiningFeePage = () => {
 
   const amount = pricing?.joiningFee ?? 2500;
 
-  const handleStartPayment = async () => {
-    setCreatingPayment(true);
+  const handleUnlock = async () => {
+    setUnlocking(true);
     setError(null);
     try {
-      const processPayment = httpsCallable(functions, 'processPayment');
-      const result = await processPayment({
-        paymentType: 'joining_fee',
-        amount,
-        currency: 'gbp',
-        metadata: { userId: user.uid }
-      });
-      setClientSecret(result.data.clientSecret);
-    } catch (err) {
-      setError(err.message || 'Failed to create payment');
-    } finally {
-      setCreatingPayment(false);
-    }
-  };
-
-  const handleDemoUnlock = async () => {
-    setDemoUnlocking(true);
-    setError(null);
-    try {
-      const demoUnlock = httpsCallable(functions, 'demoUnlock');
-      await demoUnlock({ type: 'joining_fee' });
+      await demoUnlockLocal(db, user.uid, { type: 'joining_fee' });
       navigate('/candidate/dashboard');
     } catch (err) {
-      setError(err.message || 'Demo unlock failed');
+      setError(err.message || 'Unlock failed');
     } finally {
-      setDemoUnlocking(false);
+      setUnlocking(false);
     }
   };
 
@@ -85,36 +61,13 @@ export const CandidateJoiningFeePage = () => {
             {error}
           </div>
         )}
-        {!clientSecret ? (
-          <div className="flex flex-wrap gap-3">
-            {isStripeConfigured() ? (
-              <button
-                onClick={handleStartPayment}
-                disabled={creatingPayment}
-                className="btn-primary"
-              >
-                {creatingPayment ? 'Preparing...' : 'Pay Joining Fee'}
-              </button>
-            ) : (
-              <button
-                onClick={handleDemoUnlock}
-                disabled={demoUnlocking}
-                className="btn-primary bg-amber-600 hover:bg-amber-700"
-              >
-                {demoUnlocking ? 'Unlocking...' : 'Unlock questionnaire (demo — no payment)'}
-              </button>
-            )}
-          </div>
-        ) : (
-          <PaymentForm
-            clientSecret={clientSecret}
-            amount={amount}
-            paymentType="joining_fee"
-            metadata={{ userId: user.uid }}
-            onSuccess={() => navigate('/candidate/dashboard')}
-            onCancel={() => setClientSecret(null)}
-          />
-        )}
+        <button
+          onClick={handleUnlock}
+          disabled={unlocking}
+          className="btn-primary"
+        >
+          {unlocking ? 'Unlocking...' : 'Unlock questionnaire'}
+        </button>
       </div>
     </CandidateLayout>
   );

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { collection, getDocs, query, orderBy, doc, getDoc } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
-import { db, functions } from '../../lib/firebase';
+import { db } from '../../lib/firebase';
+import { updateInternshipApplicationLocal } from '../../lib/dbUpdates';
 import { AdminLayout } from '../../components/AdminLayout';
 
 export const AdminInternshipsPage = () => {
@@ -35,9 +35,7 @@ export const AdminInternshipsPage = () => {
     setError(null);
     setUpdating(applicationId);
     try {
-      const updateFn = httpsCallable(functions, 'updateInternshipApplication');
-      await updateFn({
-        applicationId,
+      await updateInternshipApplicationLocal(db, applicationId, {
         status,
         decisionNotes: decisionNotes[applicationId] || null
       });
