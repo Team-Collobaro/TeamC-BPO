@@ -304,41 +304,43 @@ export const ModulePage = () => {
             )}
           </div>
 
-          {mcqPassed ? (
+          {/* Show completion banner if both video and MCQ are completed */}
+          {videoCompleted && mcqPassed && (
             <div className="card bg-green-50 border-2 border-green-200">
-              <div className="text-center py-8">
-                <div className="text-6xl mb-4">🎉</div>
-                <h2 className="text-2xl font-bold text-green-800 mb-2">Module Completed!</h2>
-                <p className="text-green-700 mb-4">
-                  Great job! You've mastered this module.
+              <div className="text-center py-4">
+                <div className="text-4xl mb-2">🎉</div>
+                <h2 className="text-xl font-bold text-green-800 mb-1">Module Completed!</h2>
+                <p className="text-green-700 text-sm mb-3">
+                  Great job! You've mastered this module. You can review the content below.
                 </p>
                 <button
                   onClick={() => navigate(backPath)}
-                  className="btn-primary"
+                  className="btn-primary text-sm"
                 >
                   Continue to Next Module
                 </button>
               </div>
             </div>
-          ) : (
-            <>
-              <VideoPlayer
-                bunnyEmbedUrl={module.bunnyEmbedUrl}
-                youtubeUrl={module.youtubeUrl}
-                thumbnailUrl={module.thumbnailUrl}
-                onVideoComplete={handleVideoComplete}
-                videoCompleted={videoCompleted}
-              />
-
-              <MCQSection
-                key={`mcq-${moduleId}`}
-                mcqQuestions={module.mcq || []}
-                onSubmit={handleMCQSubmit}
-                isLocked={false}
-                isSubmitting={isSubmitting}
-              />
-            </>
           )}
+
+          {/* Always show video and questions (allow re-access after completion) */}
+          <>
+            <VideoPlayer
+              bunnyEmbedUrl={module.bunnyEmbedUrl}
+              youtubeUrl={module.youtubeUrl}
+              thumbnailUrl={module.thumbnailUrl}
+              onVideoComplete={handleVideoComplete}
+              videoCompleted={videoCompleted}
+            />
+
+            <MCQSection
+              key={`mcq-${moduleId}`}
+              mcqQuestions={module.mcq || []}
+              onSubmit={handleMCQSubmit}
+              isLocked={!videoCompleted}
+              isSubmitting={isSubmitting}
+            />
+          </>
         </div>
       </div>
     </Wrapper>

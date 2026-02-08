@@ -138,11 +138,14 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
             },
             events: {
               onReady: (event) => {
+                console.log('YouTube player ready');
                 setPlayerReady(true);
                 setIsLoading(false);
                 try {
-                  setDuration(event.target.getDuration());
+                  const duration = event.target.getDuration();
+                  setDuration(duration);
                   event.target.setVolume(volume);
+                  console.log('Player initialized:', { duration, volume });
                 } catch (err) {
                   console.error('Error in onReady:', err);
                 }
@@ -205,7 +208,7 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
         }
       }
     };
-  }, [youtubeVideoId, isYouTube, volume]);
+  }, [youtubeVideoId, isYouTube]);
 
   // Update current time
   useEffect(() => {
@@ -226,9 +229,64 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
   }, [playerReady, isYouTube]);
 
   const togglePlay = () => {
-    if (!playerRef.current) return;
-    if (!playerReady) return;
+    // For non-YouTube videos (Bunny embed), use native HTML5 video controls
+    if (!isYouTube) {
+      // Bunny embed uses iframe, which handles play/pause internally
+      // We can't control it programmatically, so just show a message
+      console.log('Bunny embed video - use controls in the video player');
+      return;
+    }
 
+    // For YouTube videos, check if player is ready and has the method
+    if (!playerRef.current) {
+      console.warn('Player ref not available');
+      return;
+    }
+
+    // Check if playVideo method exists (YouTube API player)
+    if (typeof playerRef.current.playVideo !== 'function') {
+      console.warn('YouTube player not ready or not initialized. Switching to fallback...');
+      // Switch to fallback embed if API player isn't working
+      if (!useFallbackEmbed) {
+        setYoutubeApiFailed(true);
+        setIsLoading(false);
+      }
+      return;
+    }
+    
+    // Double-check method exists before proceeding (defensive programming)
+    if (typeof playerRef.current.playVideo !== 'function' || typeof playerRef.current.pauseVideo !== 'function') {
+      console.warn('YouTube player methods not available. Switching to fallback...');
+      if (!useFallbackEmbed) {
+        setYoutubeApiFailed(true);
+        setIsLoading(false);
+      }
+      return;
+    }
+
+    // For YouTube videos, ensure player is ready
+    if (!playerReady) {
+      console.warn('YouTube player not ready yet. Please wait...');
+      // Try to initialize if not ready
+      if (window.YT && window.YT.Player && containerRef.current) {
+        // Player might be initializing, wait a bit
+        setTimeout(() => {
+          if (playerRef.current && typeof playerRef.current.playVideo === 'function') {
+            try {
+              playerRef.current.playVideo();
+            } catch (err) {
+              console.error('Error playing video after delay:', err);
+              // Switch to fallback on error
+              setYoutubeApiFailed(true);
+              setIsLoading(false);
+            }
+          }
+        }, 500);
+      }
+      return;
+    }
+
+    // Safe to call YouTube API methods (we've verified they exist)
     try {
       if (isPlaying) {
         playerRef.current.pauseVideo();
@@ -237,35 +295,59 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
       }
     } catch (err) {
       console.error('Error toggling play:', err);
+      // Fallback: switch to fallback embed if YouTube API fails
+      if (isYouTube && !useFallbackEmbed) {
+        console.log('Switching to fallback embed due to API error');
+        setYoutubeApiFailed(true);
+        setIsLoading(false);
+      }
     }
   };
 
   const handleSeek = (e) => {
     if (!playerRef.current) return;
+    if (!isYouTube || !playerReady) return;
+    if (typeof playerRef.current.seekTo !== 'function') return;
+    
     const rect = e.currentTarget.getBoundingClientRect();
     const percent = (e.clientX - rect.left) / rect.width;
     const newTime = percent * duration;
-    playerRef.current.seekTo(newTime, true);
-    setCurrentTime(newTime);
+    
+    try {
+      playerRef.current.seekTo(newTime, true);
+      setCurrentTime(newTime);
+    } catch (err) {
+      console.error('Error seeking video:', err);
+    }
   };
 
   const handleVolumeChange = (e) => {
     const newVolume = parseInt(e.target.value);
     setVolume(newVolume);
-    if (playerRef.current) {
-      playerRef.current.setVolume(newVolume);
-      setIsMuted(newVolume === 0);
+    if (playerRef.current && isYouTube && typeof playerRef.current.setVolume === 'function') {
+      try {
+        playerRef.current.setVolume(newVolume);
+        setIsMuted(newVolume === 0);
+      } catch (err) {
+        console.error('Error setting volume:', err);
+      }
     }
   };
 
   const toggleMute = () => {
-    if (!playerRef.current) return;
-    if (isMuted) {
-      playerRef.current.unMute();
-      setIsMuted(false);
-    } else {
-      playerRef.current.mute();
-      setIsMuted(true);
+    if (!playerRef.current || !isYouTube) return;
+    if (typeof playerRef.current.mute !== 'function' || typeof playerRef.current.unMute !== 'function') return;
+    
+    try {
+      if (isMuted) {
+        playerRef.current.unMute();
+        setIsMuted(false);
+      } else {
+        playerRef.current.mute();
+        setIsMuted(true);
+      }
+    } catch (err) {
+      console.error('Error toggling mute:', err);
     }
   };
 
@@ -354,13 +436,16 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
           </div>
         )}
 
-        {/* Large Play Button Overlay (when paused; not used for fallback embed) */}
-        {!useFallbackEmbed && !isLoading && !isPlaying && (isYouTube ? playerReady : true) && (
+        {/* Large Play Button Overlay (when paused; show even if player not ready for better UX) */}
+        {!useFallbackEmbed && !isLoading && !isPlaying && (
           <div
             className="absolute inset-0 flex items-center justify-center z-15 cursor-pointer group/play"
             onClick={(e) => {
               e.stopPropagation();
-              if (isYouTube) togglePlay();
+              if (isYouTube) {
+                togglePlay();
+              }
+              // For non-YouTube videos, clicking will interact with iframe directly
             }}
           >
             <div className="bg-black/60 rounded-full p-6 group-hover/play:bg-black/80 transition-colors">
@@ -368,6 +453,16 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
                 <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
               </svg>
             </div>
+            {isYouTube && !playerReady && (
+              <div className="absolute bottom-20 left-1/2 -translate-x-1/2 bg-black/80 text-white text-xs px-3 py-1 rounded">
+                Loading player...
+              </div>
+            )}
+            {!isYouTube && (
+              <div className="absolute bottom-20 left-1/2 -translate-x-1/2 bg-black/80 text-white text-xs px-3 py-1 rounded">
+                Click video to play
+              </div>
+            )}
           </div>
         )}
 
@@ -392,9 +487,14 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
             <div className="flex items-center gap-3 p-4">
               {/* Play/Pause */}
               <button
-                onClick={togglePlay}
-                className="text-white hover:text-primary-400 transition-colors"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  togglePlay();
+                }}
+                disabled={isYouTube && !playerReady}
+                className={`text-white hover:text-primary-400 transition-colors ${isYouTube && !playerReady ? 'opacity-50 cursor-not-allowed' : ''}`}
                 aria-label={isPlaying ? 'Pause' : 'Play'}
+                title={isYouTube && !playerReady ? 'Player loading...' : (isPlaying ? 'Pause' : 'Play')}
               >
                 {isPlaying ? (
                   <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
@@ -495,8 +595,17 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
         {isYouTube && !isLoading && !playerReady && youtubeVideoId && !useFallbackEmbed && (
           <div className="absolute inset-0 flex items-center justify-center text-white bg-gray-900 z-20">
             <div className="text-center">
-              <p className="text-lg font-medium mb-2">Video failed to load</p>
-              <p className="text-sm text-gray-400">Please check the video URL or try refreshing the page</p>
+              <p className="text-lg font-medium mb-2">Video player loading...</p>
+              <p className="text-sm text-gray-400 mb-4">If this persists, the video will use fallback mode</p>
+              <button
+                onClick={() => {
+                  setYoutubeApiFailed(true);
+                  setIsLoading(false);
+                }}
+                className="px-4 py-2 bg-primary-600 text-white rounded hover:bg-primary-700"
+              >
+                Use Fallback Player
+              </button>
             </div>
           </div>
         )}
@@ -524,7 +633,7 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
 
       {videoCompleted && (
         <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-          <p className="text-green-800 font-medium">✓ Video completed! Now take the MCQ below.</p>
+          <p className="text-green-800 font-medium">✓ Video completed! You can now access the MCQ questions below. You can also re-watch this video anytime.</p>
         </div>
       )}
     </div>
