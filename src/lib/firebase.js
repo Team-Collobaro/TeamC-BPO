@@ -3,8 +3,17 @@ import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
+const apiKey = import.meta.env.VITE_FIREBASE_API_KEY;
+if (!apiKey || apiKey === 'your-api-key' || String(apiKey).trim().startsWith('your-')) {
+  const msg =
+    'Firebase API key is missing or still a placeholder. ' +
+    'Create .env.local in the project root (copy env.example), set VITE_FIREBASE_API_KEY to your Web API key from Firebase Console → Project settings → General, then restart the dev server.';
+  console.error(msg);
+  throw new Error(msg);
+}
+
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  apiKey,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,

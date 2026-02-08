@@ -1,6 +1,19 @@
 import { Link } from 'react-router-dom';
 
-export const ModuleSidebar = ({ modules, courseId, currentModuleId, unlockedModuleOrder }) => {
+export const ModuleSidebar = ({ modules, courseId, currentModuleId, unlockedModuleOrder, progress }) => {
+  const completedModules = progress?.completedModules || {};
+
+  const isModuleFullyCompleted = (moduleId) => {
+    const p = completedModules[moduleId];
+    return !!(p?.videoCompleted && p?.mcqPassed);
+  };
+
+  const isLocked = (module) => {
+    if (module.order > unlockedModuleOrder) return true;
+    if (module.order <= 1) return false;
+    const prevModule = modules.find((m) => m.order === module.order - 1);
+    return prevModule ? !isModuleFullyCompleted(prevModule.id) : false;
+  };
 
   return (
     <div className="bg-white rounded-lg shadow-md flex flex-col sticky top-4 h-[calc(100vh-2rem)] max-h-[calc(100vh-2rem)]">
@@ -13,7 +26,7 @@ export const ModuleSidebar = ({ modules, courseId, currentModuleId, unlockedModu
       <div className="flex-1 overflow-y-auto p-4 pt-4 min-h-0">
         <div className="space-y-2">
           {modules.map((module) => {
-            const isLocked = module.order > unlockedModuleOrder;
+            const locked = isLocked(module);
             const isCurrent = module.id === currentModuleId;
             
             const ModuleItem = () => (
@@ -21,7 +34,7 @@ export const ModuleSidebar = ({ modules, courseId, currentModuleId, unlockedModu
                 className={`p-3 rounded-lg transition-colors ${
                   isCurrent
                     ? 'bg-primary-100 border-2 border-primary-500'
-                    : isLocked
+                    : locked
                     ? 'bg-gray-50 opacity-60'
                     : 'bg-gray-50 hover:bg-gray-100'
                 }`}
@@ -33,12 +46,12 @@ export const ModuleSidebar = ({ modules, courseId, currentModuleId, unlockedModu
                       {module.title}
                     </span>
                   </div>
-                  {isLocked && <span className="text-sm">🔒</span>}
+                  {locked && <span className="text-sm">🔒</span>}
                 </div>
               </div>
             );
             
-            if (isLocked) {
+            if (locked) {
               return <div key={module.id}><ModuleItem /></div>;
             }
             

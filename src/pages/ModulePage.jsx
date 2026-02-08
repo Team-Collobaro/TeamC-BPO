@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { doc, getDoc, setDoc, collection, query, orderBy, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
 
-import { submitMcqLocal } from '../lib/dbUpdates';
+import { submitMcqLocal, saveMcqDraftLocal } from '../lib/dbUpdates';
 import { Layout } from '../components/Layout';
 import { LearnerLayout } from '../components/LearnerLayout';
 import { ROLES } from '../lib/firebase';
@@ -149,6 +149,22 @@ export const ModulePage = () => {
     }
   };
 
+  const draftSaveTimerRef = useRef(null);
+  const handleDraftChange = useCallback(
+    (draftAnswers) => {
+      if (!user?.uid) return;
+      if (progress?.completedModules?.[moduleId]?.mcqPassed) return;
+      if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+      draftSaveTimerRef.current = setTimeout(() => {
+        draftSaveTimerRef.current = null;
+        saveMcqDraftLocal(db, user.uid, { courseId, moduleId, draftAnswers }).catch((err) =>
+          console.warn('Failed to save draft answers:', err)
+        );
+      }, 800);
+    },
+    [user?.uid, courseId, moduleId, progress?.completedModules?.[moduleId]?.mcqPassed]
+  );
+
   const handleMCQSubmit = async (answers) => {
     // #region agent log
     fetch('http://127.0.0.1:7246/ingest/41320592-e9da-445d-8f78-690f29197d46',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ModulePage.jsx:150',message:'handleMCQSubmit called',data:{userId:user?.uid,hasModule:!!module,mcqCount:module?.mcq?.length,answersCount:Object.keys(answers).length},timestamp:Date.now()})}).catch(()=>{});
@@ -269,6 +285,15 @@ export const ModulePage = () => {
   const moduleProgress = progress?.completedModules?.[moduleId] || {};
   const videoCompleted = moduleProgress.videoCompleted || false;
   const mcqPassed = moduleProgress.mcqPassed || false;
+  const savedMcqResult = mcqPassed && moduleProgress.mcqAnswers
+    ? {
+        score: moduleProgress.score ?? 0,
+        passed: true,
+        correctCount: (moduleProgress.mcqAnswers || []).filter((r) => r.isCorrect).length,
+        totalQuestions: (moduleProgress.mcqAnswers || []).length,
+        answerResults: moduleProgress.mcqAnswers || []
+      }
+    : null;
 
   return (
     <Wrapper>
@@ -289,6 +314,7 @@ export const ModulePage = () => {
             courseId={courseId}
             currentModuleId={moduleId}
             unlockedModuleOrder={progress?.unlockedModuleOrder || 1}
+            progress={progress}
           />
         </div>
 
@@ -339,6 +365,9 @@ export const ModulePage = () => {
               onSubmit={handleMCQSubmit}
               isLocked={!videoCompleted}
               isSubmitting={isSubmitting}
+              initialAnswers={mcqPassed ? {} : (progress?.completedModules?.[moduleId]?.mcqDraft || {})}
+              onDraftChange={handleDraftChange}
+              savedResult={savedMcqResult}
             />
           </>
         </div>

@@ -1,9 +1,27 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
-export const MCQSection = ({ mcqQuestions, onSubmit, isLocked, isSubmitting }) => {
-  const [answers, setAnswers] = useState({});
-  const [showResults, setShowResults] = useState(false);
-  const [results, setResults] = useState(null);
+export const MCQSection = ({ mcqQuestions, onSubmit, isLocked, isSubmitting, initialAnswers = {}, onDraftChange, savedResult }) => {
+  const [answers, setAnswers] = useState(() => ({ ...initialAnswers }));
+  const [showResults, setShowResults] = useState(!!savedResult);
+  const [results, setResults] = useState(savedResult || null);
+
+  const appliedInitialRef = useRef(false);
+  // When we have saved result from progress (already completed), show results view
+  useEffect(() => {
+    if (savedResult) {
+      setResults(savedResult);
+      setShowResults(true);
+    }
+  }, [savedResult]);
+
+  // Load saved draft from database once when initialAnswers is available
+  useEffect(() => {
+    if (appliedInitialRef.current || showResults) return;
+    if (initialAnswers && Object.keys(initialAnswers).length > 0) {
+      setAnswers({ ...initialAnswers });
+      appliedInitialRef.current = true;
+    }
+  }, [initialAnswers, showResults]);
 
   // Track state changes for debugging
   useEffect(() => {
@@ -13,10 +31,9 @@ export const MCQSection = ({ mcqQuestions, onSubmit, isLocked, isSubmitting }) =
   }, [showResults, results]);
 
   const handleAnswerChange = (questionId, optionIndex) => {
-    setAnswers(prev => ({
-      ...prev,
-      [questionId]: optionIndex
-    }));
+    const next = { ...answers, [questionId]: optionIndex };
+    setAnswers(next);
+    onDraftChange?.(next);
   };
 
   const handleSubmit = async () => {

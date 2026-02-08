@@ -37,8 +37,23 @@ function scoreToStarRating(score, starMapping) {
 }
 
 /**
- * Submit MCQ. Only update Firebase when all answers are correct (100%).
- * If not passed, returns score/result without writing to the database.
+ * Save MCQ draft answers (selections before submit) to the database.
+ * Used so answers persist if the user leaves and comes back.
+ */
+export async function saveMcqDraftLocal(db, userId, { courseId, moduleId, draftAnswers }) {
+  if (!courseId || !moduleId || typeof draftAnswers !== 'object') return;
+  const progressRef = doc(db, 'users', userId, 'progress', courseId);
+  const progressSnap = await getDoc(progressRef);
+  const existing = progressSnap.exists() ? progressSnap.data() : { unlockedModuleOrder: 1, completedModules: {} };
+  const completedModules = { ...(existing.completedModules || {}) };
+  const currentModule = { ...(completedModules[moduleId] || {}) };
+  currentModule.mcqDraft = draftAnswers;
+  completedModules[moduleId] = currentModule;
+  await setDoc(progressRef, { ...existing, completedModules }, { merge: true });
+}
+
+/**
+ * Submit MCQ. Saves answers and result to the database (always). Unlocks next module only when 100% and video completed.
  */
 export async function submitMcqLocal(db, userId, { courseId, moduleId, answers }) {
   // #region agent log
@@ -155,12 +170,12 @@ export async function submitMcqLocal(db, userId, { courseId, moduleId, answers }
     }
 
     const moduleProgress = currentProgress.completedModules?.[moduleId] || {};
-    // Remove undefined values from moduleProgress before spreading
     const cleanedModuleProgress = removeUndefined(moduleProgress);
-    
+    const { mcqDraft, ...moduleProgressWithoutDraft } = cleanedModuleProgress;
+
     const updatedModuleProgress = {
-      ...cleanedModuleProgress, // Preserve existing videoCompleted status if any (without undefined values)
-      mcqAnswers: answerResults, // Store all answers with correctness
+      ...moduleProgressWithoutDraft, // Preserve videoCompleted etc.; drop draft once submitted
+      mcqAnswers: answerResults, // Store all answers with correctness in database
       mcqPassed: passed, // Only true if 100%
       score,
       mcqSubmittedAt: serverTimestamp()
@@ -174,9 +189,10 @@ export async function submitMcqLocal(db, userId, { courseId, moduleId, answers }
       [moduleId]: cleanedUpdatedModuleProgress
     };
 
-    // Only unlock next module if passed (100%)
+    // Only unlock next module if passed (100%) AND video was completed for this module
     let newUnlockedOrder = currentProgress.unlockedModuleOrder || 1;
-    if (passed && moduleData.order === newUnlockedOrder) {
+    const videoCompleted = cleanedModuleProgress.videoCompleted === true;
+    if (passed && moduleData.order === newUnlockedOrder && videoCompleted) {
       newUnlockedOrder = newUnlockedOrder + 1;
     }
 
