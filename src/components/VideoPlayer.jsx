@@ -14,15 +14,28 @@ const getYouTubeVideoId = (url) => {
   return null;
 };
 
+// Extract Google Drive file ID from view/open links (e.g. drive.google.com/file/d/ID/view)
+const getGoogleDriveFileId = (url) => {
+  if (!url || typeof url !== 'string') return null;
+  const m = url.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/) ||
+            url.match(/drive\.google\.com\/open\?id=([a-zA-Z0-9_-]+)/);
+  return m ? m[1] : null;
+};
+
 export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoComplete, videoCompleted }) => {
   const [thumbnailOverlayDismissed, setThumbnailOverlayDismissed] = useState(false);
 
   const videoUrl = youtubeUrl || bunnyEmbedUrl;
   const youtubeVideoId = useMemo(() => getYouTubeVideoId(videoUrl), [videoUrl]);
+  const googleDriveFileId = useMemo(() => getGoogleDriveFileId(videoUrl), [videoUrl]);
   const isYouTube = !!youtubeVideoId;
+  const isGoogleDrive = !!googleDriveFileId;
 
-  const embedSrc = isYouTube
+  const youtubeEmbedSrc = isYouTube
     ? `https://www.youtube.com/embed/${youtubeVideoId}?rel=0&modestbranding=1`
+    : null;
+  const googleDriveEmbedSrc = isGoogleDrive
+    ? `https://drive.google.com/file/d/${googleDriveFileId}/preview`
     : null;
 
   const resolvedThumbnailUrl = thumbnailUrl || (youtubeVideoId ? `https://img.youtube.com/vi/${youtubeVideoId}/sddefault.jpg` : null);
@@ -33,9 +46,9 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
       <h2 className="text-xl font-semibold mb-4">Video Lesson</h2>
 
       <div className="relative aspect-video bg-black rounded-lg overflow-hidden mb-4">
-        {embedSrc && (
+        {youtubeEmbedSrc && (
           <iframe
-            src={embedSrc}
+            src={youtubeEmbedSrc}
             className="w-full h-full absolute inset-0"
             frameBorder="0"
             allowFullScreen
@@ -44,7 +57,18 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
           />
         )}
 
-        {!isYouTube && videoUrl && (
+        {!isYouTube && googleDriveEmbedSrc && (
+          <iframe
+            src={googleDriveEmbedSrc}
+            className="w-full h-full absolute inset-0"
+            frameBorder="0"
+            allowFullScreen
+            allow="autoplay"
+            title="Video lesson"
+          />
+        )}
+
+        {!isYouTube && !isGoogleDrive && videoUrl && (
           <iframe
             src={videoUrl}
             className="w-full h-full absolute inset-0"
@@ -80,7 +104,7 @@ export const VideoPlayer = ({ bunnyEmbedUrl, youtubeUrl, thumbnailUrl, onVideoCo
           <div className="absolute inset-0 flex items-center justify-center text-white bg-gray-900">
             <div className="text-center">
               <p className="text-lg font-medium mb-2">No video available</p>
-              <p className="text-sm text-gray-400">Please add a YouTube URL or Bunny Stream URL</p>
+              <p className="text-sm text-gray-400">Please add a YouTube URL, Google Drive link, or Bunny Stream URL</p>
             </div>
           </div>
         )}
