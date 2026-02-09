@@ -7,7 +7,8 @@ const apiKey = import.meta.env.VITE_FIREBASE_API_KEY;
 if (!apiKey || apiKey === 'your-api-key' || String(apiKey).trim().startsWith('your-')) {
   const msg =
     'Firebase API key is missing or still a placeholder. ' +
-    'Create .env.local in the project root (copy env.example), set VITE_FIREBASE_API_KEY to your Web API key from Firebase Console → Project settings → General, then restart the dev server.';
+    'Local: create .env.local (copy env.example), set VITE_FIREBASE_* and restart dev server. ' +
+    'Vercel: add VITE_FIREBASE_API_KEY (and other VITE_FIREBASE_*) in Project Settings → Environment Variables, then redeploy.';
   console.error(msg);
   throw new Error(msg);
 }
